@@ -1,63 +1,116 @@
-\
+'use strict';
+
 /**
- * Small helpers for waits and extraction.
+ * Small helpers to keep main.js clean.
  */
-const delay = (ms) => new Promise(res => setTimeout(res, ms));
+const wait = (ms) => new Promise(res => setTimeout(res, ms));
 
-async function safeClick(page, selectorOrLocator, timeout = 4000) {
-    try {
-        const loc = typeof selectorOrLocator === 'string' ? page.locator(selectorOrLocator) : selectorOrLocator;
-        await loc.first().click({ timeout });
-        return true;
-    } catch { return false; }
-}
-
+/** Try to click any cookie accept button. */
 async function acceptCookies(page) {
-    const candidates = [
-        'button:has-text("Akzeptieren")',
-        'button:has-text("Einverstanden")',
-        'button:has-text("Alle akzeptieren")',
-        'button:has-text("OK")',
-        'button[aria-label*="akzept"]',
-        '[data-testid*="accept"] button',
-    ];
-    for (const sel of candidates) {
-        if (await page.locator(sel).first().isVisible({ timeout: 0 }).catch(() => false)) {
-            if (await safeClick(page, sel, 2000)) return true;
-        }
+  const candidates = [
+    'button:has-text("Alle akzeptieren")',
+    'button:has-text("Akzeptieren")',
+    'button:has-text("Zustimmen")',
+    'button:has-text("OK")',
+    'text=/Alle akzeptieren/i',
+  ];
+  for (const sel of candidates) {
+    const el = page.locator(sel);
+    if (await el.first().count()) {
+      try {
+        await el.first().click({ timeout: 2000 });
+        return true;
+      } catch {}
     }
-    return false;
+  }
+  return false;
 }
 
-async function loadAllResults(page) {
-    // Scroll & "mehr" button handling until no new cards appear.
-    let lastCount = -1;
-    for (let i = 0; i < 30; i++) {
-        const details = await page.locator('a:has-text("DETAILS")');
-        const count = await details.count();
-        if (count === lastCount) {
-            // Try clicking a possible "mehr" button
-            const moreSel = 'button:has-text("mehr")';
-            const hadMore = await safeClick(page, moreSel, 2000);
-            if (!hadMore) break;
-            await delay(1200);
-        } else {
-            lastCount = count;
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await delay(800);
+/** Scroll down to load lazy content. */
+async function autoScroll(page, step = 600, total = 4000) {
+  let scrolled = 0;
+  while (scrolled < total) {
+    await page.evaluate(s => window.scrollBy(0, s), step);
+    scrolled += step;
+    await wait(150);
+  }
+}
+
+/** Try to set the ZIP and radius using UI; falls back to URL params. */
+async function setZipAndRadius({ page, baseUrl, plz, radiusKm }) {
+  // 1) Try UI way
+  try {
+    // Focus ZIP input
+    const zipInput = page.getByPlaceholder('Postleitzahl/Ort');
+    if (await zipInput.count()) {
+      await zipInput.fill('');
+      await zipInput.type(String(plz), { delay: 40 });
+    } else {
+      // Old selector fallback
+      const inputs = page.locator('input');
+      const count = await inputs.count();
+      for (let i = 0; i < count; i++) {
+        const ph = await inputs.nth(i).getAttribute('placeholder');
+        if (ph && ph.toLowerCase().includes('postleitzahl')) {
+          await inputs.nth(i).fill('');
+          await inputs.nth(i).type(String(plz), { delay: 40 });
+          break;
         }
+      }
     }
-    return await page.locator('a:has-text("DETAILS")').count();
+
+    // Open radius dropdown and select
+    let radiusSet = false;
+    // Try a native <select>
+    const selectElm = page.locator('select').filter({ hasText: /km/i }).first();
+    if (await selectElm.count()) {
+      try {
+        await selectElm.selectOption({ label: `${radiusKm} km` });
+        radiusSet = true;
+      } catch {}
+    }
+    if (!radiusSet) {
+      // Try "combobox" pattern
+      const box = page.getByRole('button', { name: /Im Umkreis von/i }).first();
+      if (await box.count()) {
+        try {
+          await box.click();
+          const option = page.getByRole('option', { name: new RegExp(`^${radiusKm}\\s*km$`, 'i') });
+          await option.first().click();
+          radiusSet = true;
+        } catch {}
+      }
+    }
+
+    // Click search button
+    const searchBtn = page.getByRole('button', { name: /BIO-HÄNDLER FINDEN/i }).first();
+    if (await searchBtn.count()) {
+      await searchBtn.click();
+      await page.waitForLoadState('networkidle', { timeout: 10000 });
+      return { via: 'ui', radiusSet: radiusSet || null };
+    }
+  } catch {}
+
+  // 2) Fallback: add query params to baseUrl
+  const url = new URL(baseUrl);
+  url.searchParams.set('zip', String(plz));
+  url.searchParams.set('distance', String(radiusKm));
+  await page.goto(url.toString(), { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: 10000 });
+  return { via: 'url', radiusSet: radiusKm };
 }
 
-function normalizeZip(z) {
-    const s = String(z).trim();
-    const m = s.match(/\d{5}/);
-    return m ? m[0] : null;
+/** Return all visible "DETAILS" buttons on the list page. */
+async function getDetailsButtons(page) {
+  const buttons = page.locator('a, button').filter({ hasText: /^DETAILS$/i });
+  const count = await buttons.count();
+  return { buttons, count };
 }
 
-function uniq(arr) {
-    return [...new Set(arr)];
-}
-
-module.exports = { delay, safeClick, acceptCookies, loadAllResults, normalizeZip, uniq };
+module.exports = {
+  wait,
+  acceptCookies,
+  autoScroll,
+  setZipAndRadius,
+  getDetailsButtons,
+};

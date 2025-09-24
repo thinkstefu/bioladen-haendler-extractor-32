@@ -1,17 +1,22 @@
-# Simple, stable build that avoids EACCES during npm install
+# Dockerfile: rollback to the working stack (Apify v3 + Playwright Chromium)
 FROM apify/actor-node-playwright-chrome:20
 
-# Work as root for install steps to avoid permission problems
+# Install deps as root to avoid EACCES, then drop privileges.
 USER root
 WORKDIR /usr/src/app
 
-# Install deps as root, then copy sources and chown to myuser
+# Install only production deps
 COPY package*.json ./
 RUN npm install --omit=dev --omit=optional --no-audit --no-fund
 
+# Copy source
 COPY . .
+
+# Make app files owned by non-root runtime user
 RUN chown -R myuser:myuser /usr/src/app
 
-# Drop privileges for runtime
+# Drop to non-root for runtime
 USER myuser
+
+# Apify will wrap this with xvfb-run automatically
 CMD ["node", "main.js"]
