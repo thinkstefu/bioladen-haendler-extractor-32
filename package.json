@@ -1,0 +1,9 @@
+{
+  "name": "bioladen-haendler-extractor",
+  "version": "1.0.0",
+  "description": "Simple Apify actor to scrape bioladen.de dealer search by ZIPs",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node main.js"
+  }
+}

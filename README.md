@@ -1,25 +1,15 @@
-# bioladen-simple-actor
+# bioladen-haendler-extractor (simple)
 
-Minimaler, stabiler Apify Actor, der die Bioladen-Händlersuche scrapt.
+Minimaler, robuster Actor:
+- Keine `npm install` Schritte notwendig (Base-Image enthält Playwright + Apify).
+- CommonJS (keine ESM-Fallen).
+- Läuft über alle PLZ aus `plz_full.json`.
+- Schreibt **null** bei fehlenden Feldern.
+- Export via Apify Dataset (CSV/JSON).
 
-**Was er macht**
-- Öffnet https://www.bioladen.de/bio-haendler-suche
-- Akzeptiert Cookie-Banner
-- Setzt (wenn möglich) Radius auf 50 km
-- Gibt eine PLZ ein, startet die Suche
-- Öffnet nacheinander alle "Details"-Seiten und extrahiert:
-  - name, street, zip, city, phone, website, category, source_url, query_zip
-- Schreibt die Ergebnisse ins Apify Dataset
+## Run-Hinweise
+- Timeout auf mind. 60 Minuten hochstellen.
+- Optional: Anzahl PLZ zu Testzwecken begrenzen, indem man `plz_full.json` temporär kürzt.
 
-**Run-Optionen (optional)**
-
-```json
-{
-  "maxZips": 200,
-  "headless": true
-}
-```
-
-**Hinweise**
-- Stelle das Run-Timeout z.B. auf 60 Minuten.
-- Ersetze bei Bedarf `plz_full.json` mit deiner vollständigen Liste.
+## Build
+Das beiliegende `Dockerfile` wird benutzt – kein Default-Dockerfile.
