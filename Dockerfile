@@ -1,17 +1,20 @@
+# Minimal, stable build that avoids EACCES and ships Playwright Chrome
 FROM apify/actor-node-playwright-chrome:20
 
+# Workdir
 WORKDIR /usr/src/app
 
-# Install dependencies as root to avoid EACCES
-USER root
-COPY package*.json ./
-RUN npm install --omit=dev --omit=optional --no-audit --no-fund
+# Copy package manifests with correct ownership so npm can write node_modules
+COPY --chown=myuser:myuser package*.json ./
 
-# Copy the rest of the project
-COPY . .
-
-# Ensure myuser owns the working dir
-RUN chown -R myuser:myuser /usr/src/app
-
+# Use non-root user provided by the base image
 USER myuser
+
+# Install only production deps
+RUN npm install --omit=dev --no-optional --no-audit --no-fund
+
+# Copy the rest of the source
+COPY --chown=myuser:myuser . .
+
+# Default command
 CMD ["node", "main.js"]

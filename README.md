@@ -1,29 +1,38 @@
-# bioladen-extractor (Rollback-Version)
 
-**Ziel:** Für jede PLZ aus `plz_full.json` die Seite
-https://www.bioladen.de/bio-haendler-suche öffnen, Ergebnisse lesen, jede
-Detailseite öffnen und Kerninformationen in das Apify Dataset schreiben.
-(CSV/JSON/XLSX-Export geht dann über den Dataset-Viewer.)
+# bioladen-haendler-extractor (rollback, robust)
 
-Diese Version ist bewusst simpel gehalten (wie der erfolgreiche Run mit ~90 Einträgen).
-- Kein erzwungener 50-km-Radius (Standard-UI bleibt bestehen)
-- Sequentielles Abarbeiten, robuste Selektoren mit Fallbacks
-- Fehlende Felder werden mit null befüllt
+**Tut genau das Nötige:** Für jede PLZ aus `plz_full.json` die Seite
+https://www.bioladen.de/bio-haendler-suche aufrufen, Suche starten, alle Treffer laden, jede Detailseite öffnen und die Felder extrahieren. Fehlende Felder werden als `null` gespeichert.
 
 ## Build & Run auf Apify
-- Actor bauen (Dockerfile enthalten)
-- Standard-Command: `node main.js` (Apify ruft automatisch mit xvfb-run)
-- Output erscheint im *default dataset*
+- Dockerfile verwendet `apify/actor-node-playwright-chrome:20`
+- Keine EACCES-Probleme, da `package.json` mit `--chown` kopiert und als `myuser` installiert.
 
-## Export
-- CSV: *Dataset* → *Export* → `CSV`
-- XLSX: *Dataset* → *Export* → `XLSX`
+### Input (optional)
+```json
+{
+  "radiusKm": 50,
+  "startIndex": 0,
+  "limit": null,
+  "plzList": null
+}
+```
+- `radiusKm`: angestrebter Umkreis in km (Default 50). UI und URL-Fallback.
+- `startIndex`: Startindex in der PLZ-Liste.
+- `limit`: Anzahl PLZs, die dieser Run abarbeitet (zum Testen).
+- `plzList`: Wenn gesetzt, überschreibt `plz_full.json`.
 
-## Felder
-- zip, name, type, street, postalCode, city, phone, website, openingHours, sourceUrl
+### Output
+Schreibt in das default Dataset (`Apify.pushData`) mit Spalten:
+`email, kategorie, name, ort, plz, quelle_plz, strasse, telefon, webseite, source_url`
+
+## Lokaler Test
+```bash
+npm install
+node main.js
+```
 
 ## Hinweise
-- Cookie-Banner wird automatisch bestätigt (mehrere Fallback-Selektoren)
-- „Details“-Links werden nacheinander geöffnet (neuer Tab oder gleiche Seite)
-- Wenn die Seite ihre Struktur ändert, kann es zu Ausfällen kommen – diese Version
-  fokussiert Stabilität wie im 90er-Run, nicht Perfektion der Feldzuordnung.
+- Der Crawler scrollt und klickt "mehr" so lange, bis keine neuen `DETAILS`-Buttons erscheinen.
+- Wenn das PLZ-Feld im UI nicht verfügbar ist, wird ein URL-Fallback verwendet.
+- Anti-Bot-Schutz: konservative Wartezeiten, `networkidle`, User-Agent gesetzt.
