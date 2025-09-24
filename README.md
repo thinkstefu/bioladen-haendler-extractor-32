@@ -1,29 +1,25 @@
-# bioladen-haendler-extractor — Minimal (stabil)
+# bioladen-simple-actor
 
-**Was es macht:**  
-- Öffnet `https://www.bioladen.de/bio-haendler-suche`
-- Tippt jede PLZ aus `plz_full.json` ein
-- Setzt, wenn möglich, den Umkreis auf **50 km** und aktiviert *Bioläden / Marktstände / Lieferservice*
-- Öffnet **alle Detailseiten** und extrahiert **Name, Straße, PLZ, Ort, Telefon, Website, source_url, query_zip**
-- Schreibt alles in das **Apify Dataset** (du kannst CSV/XLSX direkt aus dem Dataset exportieren)
+Minimaler, robuster Actor zum Scrapen der Händlerdetails auf https://www.bioladen.de/bio-haendler-suche.
 
-## Build (keine npm-Fehler)
-Das Dockerfile **führt kein `npm install` aus**. Die Abhängigkeiten (Apify SDK & Playwright) sind im Base-Image bereits vorhanden.
+## Features
+- Liest PLZ aus `plz_full.json` (Array aus Strings)
+- Setzt Kategorien **Bioläden**, **Marktstände**, **Lieferservice**
+- Setzt Radius **50 km** (über UI; ohne URL-Hacks)
+- Klickt alle **Details**-Links der Trefferliste, öffnet die Seite und extrahiert:
+  - `name, street, zip, city, phone, website, source_url, query_zip`
+- Speichert alles im **Apify Dataset**
 
-## Run (Apify)
-- **Timeout** in den Run-Optionen auf z. B. **60 Minuten** stellen.
-- Optionales Input JSON (nicht erforderlich):
-  ```json
-  {
-    "maxZips": 200,
-    "headless": true
-  }
-  ```
+## Run-Optionen (optional, Input JSON)
+```json
+{
+  "maxZips": 500,
+  "startIndex": 0,
+  "headless": true
+}
+```
 
-## Output
-- Die Ergebnisse liegen im **Default Dataset** des Runs.
-- Export-Links: CSV / XLSX / JSON sind über das Dataset verfügbar.
-
-## Anpassungen
-- Selektoren liegen zentral in `main.js` in `SELECTORS`.
-- Falls die Seite das UI ändert, passen hier 1–2 Zeilen und es läuft weiter.
+## Hinweise
+- Stelle das **Timeout** in den Run-Optionen auf z. B. **60 Minuten** oder mehr.
+- Falls die Seite UI-Änderungen bekommt, sind Selektoren zentral in `SELECTORS` in `main.js` definiert.
+- Keine `npm install` Schritte nötig – das Base-Image bringt Playwright & Apify mit.

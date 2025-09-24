@@ -1,10 +1,13 @@
 FROM apify/actor-node-playwright-chrome:20
 
-# Workdir
+# Work directory
 WORKDIR /usr/src/app
 
-# Copy all sources (no npm install required; base image contains Apify SDK + Playwright)
+# Copy sources
 COPY . .
 
-# Default command
+# Run as non-root user provided by the base image
+USER myuser
+
+# Start
 CMD ["node", "main.js"]

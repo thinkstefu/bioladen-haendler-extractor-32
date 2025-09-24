@@ -1,367 +1,372 @@
 \
-    const { Actor, Dataset, log } = require('apify');
-    const { chromium } = require('playwright');
-    const fs = require('fs');
-    const path = require('path');
+'use strict';
 
-    // ---------- Config ----------
-    const START_URL = 'https://www.bioladen.de/bio-haendler-suche';
-    const RADIUS_LABELS = [/50\s*km/i, /50/];
-    const CATEGORY_LABELS = [/bioläden?/i, /marktstände?/i, /liefer( ?service|ungen)?/i];
+/**
+ * Minimal, robuste Version ohne npm install.
+ * - CommonJS + Actor.main (Apify v3)
+ * - Playwright chromium
+ * - UI-Interaktion (kein URL-Hack), robustes Fallback-Handling
+ */
 
-    const SELECTORS = {
-        zipCandidates: [
-            'input[placeholder*="PLZ"]',
-            'input[placeholder*="PLZ oder"]',
-            'input[aria-label*="PLZ"]',
-            'input[name*="plz"]',
-            'input[type="search"]',
-            'input[type="text"]'
-        ],
-        searchButtonCandidates: [
-            'button:has-text("Suchen")',
-            'button[aria-label*="Suchen"]',
-            'button[type="submit"]',
-            'form button',
-            'button:has(svg)'
-        ],
-        radiusCandidates: [
-            'select',
-            '[role="combobox"]',
-            'button[aria-haspopup="listbox"]',
-            '.select-trigger',
-        ],
-        resultsContainer: [
-            '[data-results]',
-            '.search-results',
-            'section:has(h2:has-text("Treffer")), section:has(h2:has-text("Ergebnisse"))',
-            'main'
-        ],
-        resultCards: [
-            'a:has-text("Details")',
-            'a:has(.icon):has-text("Details")',
-            'a[href*="/bio-haendler/"]',
-            '[data-testid*="result"] a',
-            'article a'
-        ],
-        detailName: [
-            'h1',
-            'header h1',
-            'article h1',
-            '[data-testid="store-name"]'
-        ],
-        detailAddressBlock: [
-            'address',
-            '.address',
-            '[data-testid="address"]',
-            'section:has(h2:has-text("Adresse"))',
-            'section:has(h3:has-text("Adresse"))'
-        ],
-        detailPhone: [
-            'a[href^="tel:"]',
-            'section:has-text("Telefon") a[href^="tel:"]'
-        ],
-        detailWebsite: [
-            'a[href^="http"]:not([href*="facebook"]):not([href*="instagram"]):not([href*="twitter"])',
-        ],
-        categoryToggles: [
-            'label:has-text("Bioladen")',
-            'label:has-text("Marktstand")',
-            'label:has-text("Lieferservice")',
-            'button[role="switch"]',
-            'input[type="checkbox"]'
-        ]
-    };
+const { Actor, log } = require('apify');
+const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
 
-    function firstTruthy(arr) {
-        for (const v of arr) if (v) return v;
-        return null;
+const START_URL = 'https://www.bioladen.de/bio-haendler-suche';
+
+const SELECTORS = {
+    // ZIP Eingabefeld – mehrere Kandidaten
+    zipInputs: [
+        'input[name*="zip"]',
+        'input[id*="zip"]',
+        'input[placeholder*="PLZ"]',
+        'input[placeholder*="Postleitzahl"]',
+        'input[aria-label*="PLZ"]',
+        'input[type="search"]',
+        'input[type="text"]'
+    ],
+    // Radius – entweder echtes <select> oder Combobox
+    radiusSelects: [
+        'select[name*="radius"]',
+        'select[id*="radius"]',
+        'select:has(option:has-text("km"))'
+    ],
+    radiusComboboxes: [
+        '[role="combobox"]',
+        'button[aria-haspopup="listbox"]',
+        'button:has-text("Umkreis")'
+    ],
+    // Kategorien (Labels/Checkboxen)
+    categoryLabels: {
+        shop: /bioläden?/i,
+        market: /marktstände?/i,
+        delivery: /liefer(service)?/i,
+    },
+    // Suchen-Button
+    searchButtons: [
+        'button[type="submit"]',
+        'button:has-text("Suchen")',
+        'button:has-text("Suche")',
+        'button:has-text("Finden")',
+        'input[type="submit"]'
+    ],
+    // Treffer-Liste
+    detailsLinks: [
+        'a:has-text("Details")',
+        'a:has-text("DETAILS")',
+        'a[href*="detail"]'
+    ],
+    // Detailseite (generische Container)
+    detailsMain: [
+        'main',
+        '#main',
+        '.content',
+        'body'
+    ],
+    // Cookie-Banner
+    cookieButtons: [
+        'button:has-text("Alle akzeptieren")',
+        'button:has-text("Akzeptieren")',
+        'button:has-text("Zustimmen")',
+        'button:has-text("OK")',
+        'button[aria-label*="akzeptieren" i]'
+    ]
+};
+
+/** small helpers */
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+async function firstVisible(page, selectors, timeout = 3000) {
+    for (const sel of selectors) {
+        const el = page.locator(sel).first();
+        try {
+            await el.waitFor({ state: 'visible', timeout });
+            return el;
+        } catch {}
     }
+    return null;
+}
 
-    async function queryOne(page, selectors, { visible = true, timeout = 1000 } = {}) {
-        for (const sel of selectors) {
-            try {
-                const el = await page.locator(sel).first();
-                if (visible) await el.waitFor({ state: 'visible', timeout });
-                else await el.waitFor({ state: 'attached', timeout });
-                return el;
-            } catch {}
-        }
-        return null;
+async function clickIfVisible(page, selectors, timeout = 1500) {
+    for (const sel of selectors) {
+        const loc = page.locator(sel).first();
+        try {
+            await loc.waitFor({ state: 'visible', timeout });
+            await loc.click({ timeout });
+            return true;
+        } catch {}
     }
+    return false;
+}
 
-    async function click50km(page) {
-        // Try to open a radius control and pick "50 km" by text
-        for (const sel of SELECTORS.radiusCandidates) {
-            const ctrl = page.locator(sel).first();
+async function acceptCookies(page) {
+    for (const sel of SELECTORS.cookieButtons) {
+        const btn = page.locator(sel).first();
+        if (await btn.count()) {
             try {
-                await ctrl.waitFor({ state: 'visible', timeout: 1000 });
-                await ctrl.click({ delay: 30 });
-                // try options in open popup / listbox
-                const option = page.locator('text=/\\b50\\s*km?\\b/i').first();
-                try {
-                    await option.waitFor({ state: 'visible', timeout: 1000 });
-                    await option.click({ delay: 30 });
-                    return true;
-                } catch {}
-                // try select element set
-                const selectEl = await ctrl.elementHandle();
-                if (selectEl) {
-                    const tag = await (await selectEl.getProperty('tagName')).jsonValue();
-                    if (String(tag).toLowerCase() === 'select') {
-                        await page.selectOption(sel, { label: '50 km' }).catch(async () => {
-                            await page.selectOption(sel, { value: '50' }).catch(() => {});
-                        });
-                        return true;
-                    }
-                }
-            } catch {}
-        }
-        return false;
-    }
-
-    async function ensureCategories(page) {
-        // Try to (en)able the three categories if present.
-        for (const label of CATEGORY_LABELS) {
-            const lab = page.locator(`label:has-text("${label.source.replace(/\\\\/g,'\\')}")`).first();
-            try {
-                await lab.waitFor({ state: 'visible', timeout: 500 });
-                // If label wraps an input, toggle it to checked
-                const inp = lab.locator('input[type="checkbox"]').first();
-                const hasInp = await inp.count();
-                if (hasInp) {
-                    const checked = await inp.isChecked();
-                    if (!checked) await lab.click({ delay: 20 });
-                    continue;
-                }
-                // otherwise just click label (for custom switches)
-                await lab.click({ delay: 20 });
-            } catch {}
-        }
-    }
-
-    async function setZipAndSearch(page, zip) {
-        const zipInput = await queryOne(page, SELECTORS.zipCandidates, { visible: true, timeout: 2000 });
-        if (!zipInput) {
-            log.warning('PLZ-Feld nicht gefunden – versuche trotzdem zu suchen.');
-        } else {
-            await zipInput.fill('');
-            await zipInput.type(String(zip), { delay: 30 });
-        }
-
-        await ensureCategories(page);
-        const radiusOk = await click50km(page);
-        if (!radiusOk) log.warning('50‑km Radius im UI nicht gefunden – fahre ohne Radius-Setzen fort.');
-
-        // Try click search
-        let clicked = false;
-        for (const sel of SELECTORS.searchButtonCandidates) {
-            try {
-                const btn = page.locator(sel).first();
-                await btn.waitFor({ state: 'visible', timeout: 1000 });
-                await btn.click({ delay: 20 });
-                clicked = true;
+                await btn.click({ timeout: 1000 });
+                log.info('Cookie-Banner akzeptiert.');
                 break;
             } catch {}
         }
-        if (!clicked) {
-            // Fallback: press Enter in zip field
-            if (zipInput) {
-                await zipInput.press('Enter').catch(() => {});
-            } else {
-                // Last resort: reload with query params (if supported later)
-                await page.reload();
-            }
-        }
+    }
+}
 
-        // wait for results area / or any card
+async function findZipInput(page) {
+    for (const sel of SELECTORS.zipInputs) {
+        const loc = page.locator(sel).first();
+        const cnt = await loc.count();
+        if (!cnt) continue;
         try {
-            const container = await queryOne(page, SELECTORS.resultsContainer, { visible: true, timeout: 5000 });
-            if (!container) await page.waitForLoadState('networkidle', { timeout: 5000 });
+            await loc.waitFor({ state: 'visible', timeout: 1500 });
+            return loc;
         } catch {}
-        await page.waitForTimeout(800);
+    }
+    return null;
+}
+
+async function setZipRadiusCategoriesAndSearch(page, zip) {
+    // ZIP
+    const zipInput = await findZipInput(page);
+    if (!zipInput) {
+        log.warning('PLZ-Feld nicht gefunden.');
+    } else {
+        await zipInput.fill('');
+        await zipInput.type(String(zip), { delay: 30 });
     }
 
-    function parseAddress(text) {
-        if (!text) return { street: null, zip: null, city: null };
-        const clean = text.replace(/\s+/g, ' ').trim();
-        // Very loose patterns: "... Straße 1, 12345 Musterstadt"
-        const m = clean.match(/^(.*?),?\s*(\d{4,5})\s+(.+)$/);
-        if (m) {
-            return { street: m[1].trim() || null, zip: m[2] || null, city: m[3].trim() || null };
-        }
-        return { street: clean || null, zip: null, city: null };
-    }
-
-    async function extractDetail(page) {
-        const url = page.url();
-        // Name
-        let name = null;
-        for (const sel of SELECTORS.detailName) {
-            try {
-                const t = await page.locator(sel).first().textContent({ timeout: 500 });
-                if (t && t.trim()) { name = t.trim(); break; }
-            } catch {}
-        }
-        // Address
-        let addressText = null;
-        for (const sel of SELECTORS.detailAddressBlock) {
-            try {
-                const handle = page.locator(sel).first();
-                await handle.waitFor({ state: 'visible', timeout: 500 });
-                const t = await handle.textContent();
-                if (t && t.trim()) { addressText = t; break; }
-            } catch {}
-        }
-        const { street, zip, city } = parseAddress(addressText);
-
-        // Phone
-        let phone = null;
-        for (const sel of SELECTORS.detailPhone) {
-            try {
-                const href = await page.locator(sel).first().getAttribute('href', { timeout: 200 });
-                if (href && href.startsWith('tel:')) { phone = href.replace('tel:', '').trim(); break; }
-            } catch {}
-        }
-
-        // Website
-        let website = null;
-        for (const sel of SELECTORS.detailWebsite) {
-            try {
-                const links = page.locator(sel);
-                const count = await links.count();
-                for (let i = 0; i < count; i++) {
-                    const a = links.nth(i);
-                    const href = (await a.getAttribute('href')) || '';
-                    if (!href) continue;
-                    if (/bioladen\.de/i.test(href)) continue;
-                    if (/facebook|instagram|twitter|tiktok|youtube/i.test(href)) continue;
-                    website = href;
-                    break;
-                }
-                if (website) break;
-            } catch {}
-        }
-
-        return {
-            name: name || null,
-            street: street || null,
-            zip: zip || null,
-            city: city || null,
-            phone: phone || null,
-            website: website || null,
-            source_url: url || null,
-        };
-    }
-
-    async function collectDetailLinks(page) {
-        // Try to gather detail links from results
-        for (const sel of SELECTORS.resultCards) {
-            const els = page.locator(sel);
-            const n = await els.count().catch(() => 0);
-            if (n > 0) {
-                const hrefs = [];
-                for (let i = 0; i < n; i++) {
-                    const a = els.nth(i);
-                    const href = await a.getAttribute('href').catch(() => null);
-                    if (href && /^https?:\/\//i.test(href)) hrefs.push(href);
-                    else if (href && href.startsWith('/')) hrefs.push(new URL(href, START_URL).toString());
-                }
-                // Deduplicate
-                return [...new Set(hrefs)];
-            }
-        }
-        return [];
-    }
-
-    async function runForZip(browser, zip) {
-        const ctx = await browser.newContext();
-        const page = await ctx.newPage();
-
-        // Cookie silence
-        page.on('dialog', d => d.dismiss().catch(() => {}));
-
-        await page.goto(START_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-        // Try to accept cookies quickly
-        const cookieBtns = page.locator('button:has-text("Akzeptieren"), button:has-text("Einverstanden"), button:has-text("Alle akzeptieren")');
-        try { await cookieBtns.first().click({ timeout: 2000 }); } catch {}
-
-        // Search
-        await setZipAndSearch(page, zip);
-
-        // Collect links
-        const links = await collectDetailLinks(page);
-
-        const out = [];
-        for (const link of links) {
-            try {
-                const p2 = await ctx.newPage();
-                await p2.goto(link, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                const item = await extractDetail(p2);
-                item.query_zip = String(zip);
-                out.push(item);
-                await p2.close();
-            } catch (e) {
-                log.warning(`Detail fehlgeschlagen (${link}): ${e.message}`);
-            }
-        }
-
-        await ctx.close();
-        return out;
-    }
-
-    function readPlzList() {
-        const p = path.join(process.cwd(), 'plz_full.json');
-        if (!fs.existsSync(p)) {
-            log.error('plz_full.json nicht gefunden!');
-            return [];
-        }
+    // Kategorien anhaken – klick auf Labels (die Inputs sind oft versteckt)
+    for (const [key, regex] of Object.entries(SELECTORS.categoryLabels)) {
+        const label = page.locator('label').filter({ hasText: regex }).first();
         try {
-            const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
-            // Accept array of strings/numbers or object with property
-            const arr = Array.isArray(raw) ? raw : raw?.plz || [];
-            return arr.map(String);
-        } catch (e) {
-            log.error(`plz_full.json konnte nicht gelesen werden: ${e.message}`);
-            return [];
+            if (await label.count()) {
+                // get related input if possible
+                const forAttr = await label.getAttribute('for');
+                if (forAttr) {
+                    const checkbox = page.locator(`#${forAttr}`);
+                    const checked = await checkbox.isChecked().catch(() => false);
+                    if (!checked) await label.click({ timeout: 1500 });
+                } else {
+                    // fallback: click label, hope it toggles
+                    await label.click({ timeout: 1500 });
+                }
+            }
+        } catch {}
+    }
+
+    // Radius 50 km
+    let radiusOk = false;
+    // try real <select>
+    for (const sel of SELECTORS.radiusSelects) {
+        const dd = page.locator(sel).first();
+        if (await dd.count()) {
+            try {
+                await dd.selectOption({ label: '50 km' }).catch(async () => {
+                    await dd.selectOption('50').catch(() => {});
+                });
+                radiusOk = true;
+                break;
+            } catch {}
+        }
+    }
+    if (!radiusOk) {
+        // try combobox/button then option
+        for (const sel of SELECTORS.radiusComboboxes) {
+            const cb = page.locator(sel).first();
+            if (await cb.count()) {
+                try {
+                    await cb.click({ timeout: 1500 });
+                    // option 50 km
+                    const opt = page.locator('text=/^\\s*50\\s*km\\s*$/i').first();
+                    if (await opt.count()) {
+                        await opt.click({ timeout: 1500 });
+                        radiusOk = true;
+                        break;
+                    }
+                } catch {}
+            }
         }
     }
 
-    (async () => {
-        await Actor.init();
-        const input = await Actor.getInput() || {};
-        const { maxZips = 200, headless = true } = input;
+    // Suche starten
+    let searchClicked = await clickIfVisible(page, SELECTORS.searchButtons, 1500);
+    if (!searchClicked && zipInput) {
+        await zipInput.press('Enter').catch(() => {});
+    }
 
-        const allPlz = readPlzList();
-        if (allPlz.length === 0) {
-            log.error('Keine PLZ geladen – Abbruch.');
-            await Actor.exit();
-            return;
-        }
+    // Warten auf Ergebnisse oder "keine Ergebnisse"
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await sleep(800);
+}
 
-        log.info(`Starte mit ${allPlz.length} PLZ...`);
-
-        const browser = await chromium.launch({ headless });
-        let total = 0;
-
-        for (let i = 0; i < allPlz.length; i++) {
-            const zip = allPlz[i];
-            log.info(`=== ${i + 1}/${allPlz.length} | PLZ ${zip} ===`);
-            const items = await runForZip(browser, zip);
-            if (items.length) {
-                for (const it of items) await Dataset.pushData(it);
-                total += items.length;
-                log.info(`PLZ ${zip}: ${items.length} Datensätze gespeichert`);
-            } else {
-                log.info(`PLZ ${zip}: keine Datensätze gefunden`);
+async function collectDetailUrls(page) {
+    // alle Details-Links einsammeln, URLs absolut machen
+    const urls = new Set();
+    for (const sel of SELECTORS.detailsLinks) {
+        const links = page.locator(sel);
+        const n = await links.count();
+        for (let i = 0; i < n; i++) {
+            const href = await links.nth(i).getAttribute('href').catch(() => null);
+            if (href) {
+                const abs = new URL(href, page.url()).toString();
+                urls.add(abs);
             }
+        }
+    }
+    return Array.from(urls);
+}
 
-            // Soft throttle
-            await Actor.sleep(250);
+function extractAddressFromText(text) {
+    // naive Extraktion: erste Zeile mit Straße+Hausnr, dann PLZ+Ort
+    const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    let street = null, zip = null, city = null;
+    // Suche PLZ
+    for (const line of lines) {
+        const m = line.match(/\b(\d{5})\s+([A-Za-zÄÖÜäöüß.\- ]{2,})$/);
+        if (m) {
+            zip = m[1];
+            city = m[2].trim();
+            break;
+        }
+    }
+    // Straße: nimm die Zeile vor PLZ/Ort oder erste Zeile, die eine Hausnummer enthält
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/\d+/.test(line) && !/^\d{5}\b/.test(line)) {
+            street = line;
+            if (i+1 < lines.length && !zip) {
+                const m2 = lines[i+1].match(/\b(\d{5})\s+(.+)$/);
+                if (m2) {
+                    zip = m2[1];
+                    city = m2[2].trim();
+                }
+            }
+            break;
+        }
+    }
+    return { street, zip, city };
+}
+
+async function extractPhone(page) {
+    // Telefon aus Link oder Text
+    const telLink = await page.locator('a[href^="tel:"]').first();
+    if (await telLink.count()) {
+        const href = await telLink.getAttribute('href');
+        if (href) return href.replace(/^tel:/, '').trim() || null;
+    }
+    // Fallback: Muster im Text
+    const txt = await page.textContent('body').catch(() => '') || '';
+    const m = txt.match(/(?:Tel\.?|Telefon)\s*:?\s*([+()\d\/\-\s]{6,})/i);
+    return m ? m[1].trim() : null;
+}
+
+async function extractWebsite(page) {
+    // externe Website (kein bioladen.de)
+    const links = page.locator('a[href^="http"]');
+    const n = await links.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+        const href = (await links.nth(i).getAttribute('href').catch(() => null)) || '';
+        if (href && !href.includes('bioladen.de')) return href;
+    }
+    return null;
+}
+
+async function parseDetail(page, url, query_zip) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    const mainSel = await firstVisible(page, SELECTORS.detailsMain, 2000);
+    const ctx = mainSel ? await mainSel.textContent().catch(() => '') : (await page.textContent('body').catch(() => ''));
+
+    let name = null;
+    // h1 oder h2 als Name
+    for (const sel of ['h1','h2','.shop-title','.headline']) {
+        const node = page.locator(sel).first();
+        if (await node.count()) {
+            const t = (await node.textContent().catch(() => '') || '').trim();
+            if (t) { name = t; break; }
+        }
+    }
+
+    const addr = extractAddressFromText(ctx || '');
+    const phone = await extractPhone(page);
+    const website = await extractWebsite(page);
+
+    const rec = {
+        query_zip,
+        name: name || null,
+        street: addr.street || null,
+        zip: addr.zip || null,
+        city: addr.city || null,
+        phone: phone || null,
+        website: website || null,
+        source_url: url
+    };
+    // null-füllen für alle keys
+    for (const k of Object.keys(rec)) if (rec[k] === undefined) rec[k] = null;
+
+    await Actor.pushData(rec);
+    return rec;
+}
+
+Actor.main(async () => {
+    const input = await Actor.getInput() || {};
+    const headless = input.headless !== false;
+    const maxZips = Number.isFinite(input.maxZips) ? input.maxZips : null;
+    const startIndex = Number.isFinite(input.startIndex) ? input.startIndex : 0;
+
+    // PLZ laden
+    const plzFile = path.join(__dirname, 'plz_full.json');
+    const zips = JSON.parse(fs.readFileSync(plzFile, 'utf-8'));
+    const list = zips.slice(startIndex, maxZips ? startIndex + maxZips : undefined);
+
+    log.info(`PLZ in Lauf: ${list.length} (aus plz_full.json)`);
+
+    const browser = await chromium.launch({ headless });
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+
+    let acceptedCookies = false;
+    let totalSaved = 0;
+
+    for (let i = 0; i < list.length; i++) {
+        const zip = String(list[i]).trim();
+        log.info(`=== ${i + 1}/${list.length} | PLZ ${zip} ===`);
+
+        await page.goto(START_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+
+        if (!acceptedCookies) {
+            await acceptCookies(page).catch(() => {});
+            acceptedCookies = true;
         }
 
-        await browser.close();
-        log.info(`Fertig. Insgesamt gespeichert: ${total}`);
-        await Actor.exit();
-    })();
+        await setZipRadiusCategoriesAndSearch(page, zip);
+
+        // Treffer einsammeln
+        const urls = await collectDetailUrls(page);
+        log.info(`DETAILS-Links gefunden: ${urls.length}`);
+
+        let savedHere = 0;
+        for (const url of urls) {
+            try {
+                const rec = await parseDetail(page, url, zip);
+                savedHere++;
+                totalSaved++;
+            } catch (e) {
+                log.warning(`Fehler bei Detail ${url}: ${e.message}`);
+            }
+            // zurück zur Liste (erneut öffnen der Liste)
+            await page.goto(START_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+            await setZipRadiusCategoriesAndSearch(page, zip);
+        }
+
+        log.info(`PLZ ${zip}: ${savedHere} Datensätze gespeichert`);
+        await sleep(400); // kleine Pause
+    }
+
+    log.info(`Fertig. Insgesamt gespeichert: ${totalSaved}`);
+
+    await browser.close();
+});
