@@ -1,25 +1,25 @@
 # bioladen-simple-actor
 
-Minimaler, robuster Actor zum Scrapen der Händlerdetails auf https://www.bioladen.de/bio-haendler-suche.
+Minimaler, stabiler Apify Actor, der die Bioladen-Händlersuche scrapt.
 
-## Features
-- Liest PLZ aus `plz_full.json` (Array aus Strings)
-- Setzt Kategorien **Bioläden**, **Marktstände**, **Lieferservice**
-- Setzt Radius **50 km** (über UI; ohne URL-Hacks)
-- Klickt alle **Details**-Links der Trefferliste, öffnet die Seite und extrahiert:
-  - `name, street, zip, city, phone, website, source_url, query_zip`
-- Speichert alles im **Apify Dataset**
+**Was er macht**
+- Öffnet https://www.bioladen.de/bio-haendler-suche
+- Akzeptiert Cookie-Banner
+- Setzt (wenn möglich) Radius auf 50 km
+- Gibt eine PLZ ein, startet die Suche
+- Öffnet nacheinander alle "Details"-Seiten und extrahiert:
+  - name, street, zip, city, phone, website, category, source_url, query_zip
+- Schreibt die Ergebnisse ins Apify Dataset
 
-## Run-Optionen (optional, Input JSON)
+**Run-Optionen (optional)**
+
 ```json
 {
-  "maxZips": 500,
-  "startIndex": 0,
+  "maxZips": 200,
   "headless": true
 }
 ```
 
-## Hinweise
-- Stelle das **Timeout** in den Run-Optionen auf z. B. **60 Minuten** oder mehr.
-- Falls die Seite UI-Änderungen bekommt, sind Selektoren zentral in `SELECTORS` in `main.js` definiert.
-- Keine `npm install` Schritte nötig – das Base-Image bringt Playwright & Apify mit.
+**Hinweise**
+- Stelle das Run-Timeout z.B. auf 60 Minuten.
+- Ersetze bei Bedarf `plz_full.json` mit deiner vollständigen Liste.
