@@ -1,38 +1,28 @@
+# bioladen-extractor (rollback, minimal)
 
-# bioladen-haendler-extractor (rollback, robust)
+Stabile, einfache Actor-Version – wie beim Lauf mit ~90 Treffern.
 
-**Tut genau das Nötige:** Für jede PLZ aus `plz_full.json` die Seite
-https://www.bioladen.de/bio-haendler-suche aufrufen, Suche starten, alle Treffer laden, jede Detailseite öffnen und die Felder extrahieren. Fehlende Felder werden als `null` gespeichert.
+## Was sie tut
+- Öffnet https://www.bioladen.de/bio-haendler-suche
+- Setzt PLZ (aus `plz_full.json`) und Radius 50 km (UI + URL-Fallback)
+- Lädt **alle** Treffer der Liste (Scroll/„mehr“)
+- Öffnet alle „DETAILS“-Seiten und extrahiert Felder
+- Speichert jeden Datensatz mit vollständigem Schema (fehlend = `null`)
 
-## Build & Run auf Apify
-- Dockerfile verwendet `apify/actor-node-playwright-chrome:20`
-- Keine EACCES-Probleme, da `package.json` mit `--chown` kopiert und als `myuser` installiert.
+## Felder
+`email, kategorie, name, ort, plz, quelle_plz, strasse, telefon, webseite, source_url`
 
-### Input (optional)
+## Input (optional)
 ```json
 {
   "radiusKm": 50,
   "startIndex": 0,
-  "limit": null,
-  "plzList": null
+  "limit": 100
 }
 ```
-- `radiusKm`: angestrebter Umkreis in km (Default 50). UI und URL-Fallback.
-- `startIndex`: Startindex in der PLZ-Liste.
-- `limit`: Anzahl PLZs, die dieser Run abarbeitet (zum Testen).
-- `plzList`: Wenn gesetzt, überschreibt `plz_full.json`.
 
-### Output
-Schreibt in das default Dataset (`Apify.pushData`) mit Spalten:
-`email, kategorie, name, ort, plz, quelle_plz, strasse, telefon, webseite, source_url`
+> `limit` ist praktisch zum Testen. Weglassen = alle PLZs.
 
-## Lokaler Test
-```bash
-npm install
-node main.js
-```
-
-## Hinweise
-- Der Crawler scrollt und klickt "mehr" so lange, bis keine neuen `DETAILS`-Buttons erscheinen.
-- Wenn das PLZ-Feld im UI nicht verfügbar ist, wird ein URL-Fallback verwendet.
-- Anti-Bot-Schutz: konservative Wartezeiten, `networkidle`, User-Agent gesetzt.
+## Dockerfile-Hinweis (EACCES-Fix)
+- `npm install` wird als **root** ausgeführt, danach `chown` auf `myuser`.
+- Laufzeit erfolgt als `myuser`. So treten keine `EACCES`-Fehler mehr auf.

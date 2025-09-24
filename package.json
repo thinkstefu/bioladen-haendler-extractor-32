@@ -1,12 +1,9 @@
 {
-  "name": "bioladen-haendler-extractor",
-  "version": "4.1.0-rollback",
-  "type": "commonjs",
-  "description": "Scrape bioladen.de -> Haendlersuche (rollback/simple, robust)",
+  "name": "bioladen-extractor-rollback",
+  "version": "1.0.0",
+  "description": "Minimal, stable Apify actor to scrape bioladen.de haendlersuche by ZIP list (rollback profile).",
   "main": "main.js",
-  "scripts": {
-    "start": "node main.js"
-  },
+  "type": "commonjs",
   "dependencies": {
     "apify": "3.4.5",
     "playwright": "1.55.1"
