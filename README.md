@@ -1,26 +1,29 @@
-# Hotfix: Missing `apify` module
+# bioladen-extractor (Rollback-Version)
 
-You saw this error:
-```
-Error: Cannot find module 'apify'
-Require stack:
-- /usr/src/app/main.js
-```
-Root cause: The Docker image did not run `npm install`, so the `apify` package wasn't present.
-This hotfix restores a safe install step in the Dockerfile **as root**, avoids permission issues,
-and declares `apify@^3.4.5` (SDK v3) plus `playwright` in `package.json`.
+**Ziel:** Für jede PLZ aus `plz_full.json` die Seite
+https://www.bioladen.de/bio-haendler-suche öffnen, Ergebnisse lesen, jede
+Detailseite öffnen und Kerninformationen in das Apify Dataset schreiben.
+(CSV/JSON/XLSX-Export geht dann über den Dataset-Viewer.)
 
-## How to use
-1. Replace your Actor's **Dockerfile** and **package.json** with the ones in this ZIP.
-2. Make sure your code uses Apify SDK v3 style:
-   - `const { Actor, log } = require('apify')`
-   - `await Actor.init()` / `await Actor.exit()` **or** `Actor.main(async () => { ... })`
-   - `await Actor.pushData(item)` instead of `Apify.pushData(item)`
-3. Rebuild the Actor and run again.
+Diese Version ist bewusst simpel gehalten (wie der erfolgreiche Run mit ~90 Einträgen).
+- Kein erzwungener 50-km-Radius (Standard-UI bleibt bestehen)
+- Sequentielles Abarbeiten, robuste Selektoren mit Fallbacks
+- Fehlende Felder werden mit null befüllt
 
-> Note: Base image `apify/actor-node-playwright-chrome:20` already contains browsers,
-> so this install does **not** download them again. The `npm install` only installs Node modules.
+## Build & Run auf Apify
+- Actor bauen (Dockerfile enthalten)
+- Standard-Command: `node main.js` (Apify ruft automatisch mit xvfb-run)
+- Output erscheint im *default dataset*
 
-## Tip
-If you previously saw `TypeError: Apify.main is not a function`, you are on SDK v3.
-Switch to `Actor.main(...)` and replace `Apify.*` helpers with `Actor.*` equivalents.
+## Export
+- CSV: *Dataset* → *Export* → `CSV`
+- XLSX: *Dataset* → *Export* → `XLSX`
+
+## Felder
+- zip, name, type, street, postalCode, city, phone, website, openingHours, sourceUrl
+
+## Hinweise
+- Cookie-Banner wird automatisch bestätigt (mehrere Fallback-Selektoren)
+- „Details“-Links werden nacheinander geöffnet (neuer Tab oder gleiche Seite)
+- Wenn die Seite ihre Struktur ändert, kann es zu Ausfällen kommen – diese Version
+  fokussiert Stabilität wie im 90er-Run, nicht Perfektion der Feldzuordnung.
